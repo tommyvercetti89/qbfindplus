@@ -23,6 +23,7 @@ target_compile_definitions(qbcore PUBLIC
   WINVER=0x0A00
   _WIN32_WINNT=0x0A00
   NOMINMAX
+  _CRT_SECURE_NO_WARNINGS
 )
 
 target_link_libraries(qbcore PUBLIC
@@ -53,7 +54,9 @@ target_link_libraries(qbfind PRIVATE
   dwmapi
 )
 
-if(NOT MSVC)
+if(MSVC)
+  target_link_options(qbfind PRIVATE /MANIFEST:NO)
+else()
   target_compile_options(qbfind PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
   target_link_options(qbfind PRIVATE -municode -static -static-libgcc -static-libstdc++)
 endif()

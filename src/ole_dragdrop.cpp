@@ -268,6 +268,7 @@ private:
 }  // namespace
 
 bool doDragDropFiles(HWND hwnd, const std::vector<std::wstring>& filePaths) {
+    (void)hwnd;
     if (filePaths.empty()) return false;
 
     auto* pData = new DataObject(filePaths);

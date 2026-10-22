@@ -1,8 +1,9 @@
 # QBFind+ (C++ Edition)
 
+[![CI](https://github.com/tommyvercetti89/qbfindplus/actions/workflows/ci.yml/badge.svg)](https://github.com/tommyvercetti89/qbfindplus/actions/workflows/ci.yml)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows_10_|_11-0078D6?logo=windows&logoColor=white)](https://microsoft.com)
 [![Language: C++20](https://img.shields.io/badge/Language-C%2B%2B20-00599C?logo=c%2B%2B&logoColor=white)](https://isocpp.org)
-[![Build: CMake](https://img.shields.io/badge/Build-CMake_3.16+-064F8C?logo=cmake&logoColor=white)](https://cmake.org)
+[![CMake: 3.16+](https://img.shields.io/badge/CMake-3.16+-064F8C)](https://cmake.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 High-performance native Windows desktop file search engine engineered with modern C++20 and pure Win32/COM APIs. Designed for instant query execution, low memory overhead, and rock-solid system stability across millions of indexed files.

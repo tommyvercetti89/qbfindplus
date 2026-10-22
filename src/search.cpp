@@ -53,7 +53,7 @@ bool parseSizeRange(const std::wstring& in, int64_t& mn, int64_t& mx) {
     else if (startsWith(s, L"<", &r)) { if (parseSize(r, v) && v > 0) { mn = 0; mx = v - 1; return true; } }
     size_t dash = s.find(L'-');
     if (dash != std::wstring::npos && dash > 0) {
-        int64_t a, b;
+        int64_t a = 0, b = 0;
         if (!parseSize(s.substr(0, dash), a) || !parseSize(s.substr(dash + 1), b) || b < a) return false;
         mn = a; mx = b;
         return true;
@@ -106,7 +106,7 @@ bool parseDateRange(const std::wstring& in, std::time_t now, int64_t& mn, int64_
     std::wstring op;
     if (startsWith(s, L">=") || startsWith(s, L"<=")) op = s.substr(0, 2);
     else if (startsWith(s, L">") || startsWith(s, L"<")) op = s.substr(0, 1);
-    int64_t a, b;
+    int64_t a = 0, b = 0;
     if (op.empty()) {
         if (!parseDateSpan(s, now, a, b)) return false;
         mn = a; mx = b;
