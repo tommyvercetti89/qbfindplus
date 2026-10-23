@@ -34,6 +34,10 @@ target_link_libraries(qbcore PUBLIC
   uxtheme
   dwmapi
   dbghelp
+  psapi
+  advapi32
+  bcrypt
+  gdiplus
 )
 
 if(MSVC)
@@ -42,12 +46,12 @@ else()
   target_compile_options(qbcore PUBLIC -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 endif()
 
-add_executable(qbfind WIN32
+add_executable(qfbi WIN32
   src/main.cpp
   src/app.rc
 )
 
-target_link_libraries(qbfind PRIVATE
+target_link_libraries(qfbi PRIVATE
   qbcore
   comctl32
   uxtheme
@@ -55,13 +59,19 @@ target_link_libraries(qbfind PRIVATE
 )
 
 if(MSVC)
-  target_link_options(qbfind PRIVATE /MANIFEST:NO)
+  target_link_options(qfbi PRIVATE /MANIFEST:NO)
 else()
-  target_compile_options(qbfind PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
-  target_link_options(qbfind PRIVATE -municode -static -static-libgcc -static-libstdc++)
+  target_compile_options(qbcore PRIVATE -ffunction-sections -fdata-sections)
+  target_compile_options(qfbi PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -ffunction-sections -fdata-sections)
+  target_link_options(qfbi PRIVATE -municode -static -static-libgcc -static-libstdc++ -Wl,--gc-sections -Wl,-s)
 endif()
 
 enable_testing()
 add_executable(search_test tests/search_test.cpp)
 target_link_libraries(search_test PRIVATE qbcore)
+if(NOT MSVC)
+  target_compile_options(search_test PRIVATE -ffunction-sections -fdata-sections)
+  target_link_options(search_test PRIVATE -static -static-libgcc -static-libstdc++ -Wl,--gc-sections -Wl,-s)
+endif()
 add_test(NAME search_test COMMAND search_test)
+

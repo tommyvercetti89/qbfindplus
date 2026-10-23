@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <shlobj.h>
+#include <psapi.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -264,7 +265,12 @@ int Indexer::priorityOf(const std::wstring& key) const {
 
 Entry Indexer::build(const std::wstring& path, int64_t size, int64_t mtime, bool isDir) const {
     Entry e = makeEntry(path, size, mtime, isDir, 3);
-    e.priority = priorityOf(e.lower);
+    e.priority = static_cast<uint8_t>(priorityOf(e.lower()));
+    return e;
+}
+
+Entry Indexer::build(uint32_t dirId, const wchar_t* fileName, int64_t size, int64_t mtime, bool isDir, uint8_t dirPrio) const {
+    Entry e = makeEntry(dirId, fileName, size, mtime, isDir, dirPrio);
     return e;
 }
 
@@ -346,6 +352,8 @@ void Indexer::flush(uint64_t id, std::vector<Entry>& batch) {
 }
 
 void Indexer::walkDir(uint64_t id, const std::wstring& dir, std::vector<Entry>& batch) {
+    uint32_t dirId = DirPool::global().getOrAdd(dir);
+    uint8_t dirPrio = static_cast<uint8_t>(priorityOf(std::wstring(DirPool::global().getLower(dirId))));
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileExW(joinPath(winPath(dir), L"*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
                                 FIND_FIRST_EX_LARGE_FETCH);
@@ -355,13 +363,12 @@ void Indexer::walkDir(uint64_t id, const std::wstring& dir, std::vector<Entry>& 
         const wchar_t* n = fd.cFileName;
         if (n[0] == L'.' && (n[1] == 0 || (n[1] == L'.' && n[2] == 0))) continue;
         if (excluded(n)) continue;
-        std::wstring full = joinPath(dir, n);
-        if (full.size() > kMaxPathChars) continue;
         bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         int64_t size = isDir ? 0 : ((static_cast<int64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow);
-        batch.push_back(build(full, size, fileTimeToUnix(fd.ftLastWriteTime), isDir));
+        batch.push_back(build(dirId, n, size, fileTimeToUnix(fd.ftLastWriteTime), isDir, dirPrio));
         if (batch.size() >= 1024) flush(id, batch);
         if (isDir && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            std::wstring full = joinPath(dir, n);
             std::wstring key = pathKey(full);
             bool dup = false;
             for (auto& q : quickRoots_)
@@ -384,8 +391,8 @@ void Indexer::worker(uint64_t id) {
                 flush(id, batch);
                 lk.lock();
             }
-            qCv_.wait(lk, [&] { return !queue_.empty() || pending_ == 0; });
-            if (queue_.empty()) break;
+            qCv_.wait(lk, [&] { return !queue_.empty() || pending_ == 0 || scanId_.load() != id; });
+            if (scanId_.load() != id || queue_.empty()) break;
             dir = std::move(queue_.front());
             queue_.pop_front();
         }
@@ -424,6 +431,12 @@ void Indexer::scanMain(uint64_t id) {
 
     if (scanId_.load() == id) {
         scanning_ = false;
+        {
+            std::unique_lock<std::shared_mutex> w(mu_);
+            entries_.shrink_to_fit();
+        }
+        DirPool::global().finishScan();
+        EmptyWorkingSet(GetCurrentProcess());
         saveCache();
         std::lock_guard<std::mutex> lk(ctlMu_);
         if (scanId_.load() == id) startWatchers();
@@ -456,7 +469,7 @@ void Indexer::saveCache() {
         writer.writeVal<uint64_t>(entries_.size());
 
         for (const Entry& e : entries_) {
-            std::string u8Path = toUtf8(e.path);
+            std::string u8Path = toUtf8(e.path());
             uint32_t u8Len = static_cast<uint32_t>(u8Path.size());
             writer.writeVal<uint32_t>(u8Len);
             writer.writeBytes(u8Path.data(), u8Len);
@@ -537,14 +550,22 @@ bool Indexer::loadCache() {
     std::fclose(f);
 
     if (!excludes_.empty()) {
-        entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const Entry& e) { return excluded(std::wstring(e.name())); }),
-                      entries.end());
+        entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const Entry& e) {
+            if (excluded(e.name)) return true;
+            for (const auto& seg : split(e.path(), L'\\')) {
+                if (excluded(seg)) return true;
+            }
+            return false;
+        }), entries.end());
     }
     {
         std::unique_lock<std::shared_mutex> w(mu_);
         entries_ = std::move(entries);
+        entries_.shrink_to_fit();
         count_ = static_cast<int64_t>(entries_.size());
     }
+    DirPool::global().finishScan();
+    EmptyWorkingSet(GetCurrentProcess());
     logf("index cache loaded: %lld entries", (long long)count_.load());
     return true;
 }
@@ -653,9 +674,10 @@ void Indexer::applyChanges(uint64_t gen, std::vector<std::wstring>& removed, std
         if (!removedSet.empty()) {
             entries_.erase(
                 std::remove_if(entries_.begin(), entries_.end(), [&](const Entry& e) {
-                    if (removedSet.count(e.lower)) return true;
+                    std::wstring eLower = e.lower();
+                    if (removedSet.count(eLower)) return true;
                     for (const auto& p : prefixes) {
-                        if (e.lower.compare(0, p.size(), p) == 0) return true;
+                        if (eLower.compare(0, p.size(), p) == 0) return true;
                     }
                     return false;
                 }),
@@ -667,12 +689,12 @@ void Indexer::applyChanges(uint64_t gen, std::vector<std::wstring>& removed, std
         if (!added.empty()) {
             std::unordered_map<std::wstring, size_t> addMap;
             for (size_t i = 0; i < added.size(); ++i) {
-                addMap[added[i].lower] = i;
+                addMap[added[i].lower()] = i;
             }
 
             std::vector<bool> consumed(added.size(), false);
             for (Entry& e : entries_) {
-                auto it = addMap.find(e.lower);
+                auto it = addMap.find(e.lower());
                 if (it != addMap.end()) {
                     e = std::move(added[it->second]);
                     consumed[it->second] = true;

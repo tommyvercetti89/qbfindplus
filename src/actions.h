@@ -25,7 +25,19 @@ bool deleteFilesToRecycleBin(HWND parent, const std::vector<std::wstring>& paths
 // Shows the native Windows file properties dialog.
 void showFileProperties(HWND parent, const std::wstring& path);
 
-// Formats file details and shows an informational dialog.
-void showFileDetailsDialog(HWND parent, const Entry& e, bool isTurkish);
+// Shows file hash dialog (SHA-256 and MD5) with clipboard copy and hash comparison.
+bool showFileHashDialog(HWND parent, const std::wstring& path, bool isTurkish);
+
+// Shows calculated folder statistics dialog.
+void showFolderSizeDialog(HWND parent, const std::wstring& folderPath, int64_t totalBytes, int64_t fileCount, int64_t subDirCount, bool isTurkish);
+
+// Shows interactive batch renamer dialog.
+bool showBatchRenameDialog(HWND parent, const std::vector<std::wstring>& paths, bool isTurkish);
+
+// Shows professional About dialog with architecture and shortcut details.
+void showAboutDialog(HWND parent, bool isTurkish);
+
+// Shows custom size filter input dialog.
+bool showCustomSizeDialog(HWND parent, std::wstring& outSizeFilter, bool isTurkish);
 
 }  // namespace qb

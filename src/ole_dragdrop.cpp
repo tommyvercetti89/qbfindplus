@@ -45,6 +45,7 @@ public:
     // IEnumFORMATETC
     STDMETHODIMP Next(ULONG celt, FORMATETC* rgelt, ULONG* pceltFetched) override {
         if (celt > 0 && !rgelt) return E_INVALIDARG;
+        if (celt > 1 && !pceltFetched) return E_INVALIDARG;
         ULONG fetched = 0;
         while (index_ < formats_.size() && fetched < celt) {
             rgelt[fetched] = formats_[index_++];

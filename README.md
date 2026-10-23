@@ -48,8 +48,14 @@ QBFind+ represents a complete ground-up rewrite of the original Go file finder, 
   - Copy to Desktop (`SHFileOperationW` with `FO_COPY`)
   - Shell Properties Dialog (`SEE_MASK_INVOKEIDLIST`)
 - **Search History & Favorites:** Persistent tracking under `%APPDATA%\QBFind` for recent and saved searches.
-- **Native Shell Icons:** Integration with Windows system image list (`SHGetFileInfoW`) directly mapped into `SysListView32`.
-- **System Theme Adaptation:** Native Windows DWM Immersive Dark Mode support.
+- **DirPool Virtualization & Ultra-Low RAM Footprint:** Interned directory string pools deduplicating paths in RAM (~40 MB RAM for 1.8M indexed files, down from 500+ MB).
+- **Batch File Renamer (Ctrl+R):** Interactive dialog with live name previews, prefix/suffix additions, and find/replace matching.
+- **Cryptographic File Integrity Engine (Ctrl+H):** Hardware-accelerated Windows CNG SHA-256 and MD5 stream hashing with background worker thread, progress bar, and instant hash match verification.
+- **True Folder Size Calculator (Ctrl+K):** Recursive directory size accumulator counting exact bytes, files, and subfolders.
+- **Address Breadcrumb Bar & Quick Navigation:** Interactive path navigation and location scopes (Desktop, Downloads, Documents, Drives).
+- **Multi-File Selection (Ctrl+A):** Full multi-selection support with Select All, Invert Selection, and live selected item counter.
+- **Working Set RAM Purge:** Release unneeded working set memory back to the OS on demand.
+- **Modern Clean Windows Typography:** Professional ClearType Segoe UI styling with zero emoji bloat across all windows and dialogs.
 
 ---
 
@@ -60,12 +66,12 @@ qbfindplus/
 |-- .github/workflows/
 |   `-- ci.yml              # Automated GitHub Actions Windows CI pipeline
 |-- src/
-|   |-- core.h / .cpp       # String transformations, settings, history, logger & crash dump
-|   |-- search.h / .cpp     # Query parser, matching rules, ranking heap
+|   |-- core.h / .cpp       # DirPool, string transformations, settings, history, crash reporter
+|   |-- search.h / .cpp     # Multi-threaded query parser, matching rules, Turkish aliases
 |   |-- indexer.h / .cpp    # Parallel directory crawler, streaming cache & directory watcher
 |   |-- ole_dragdrop.h/.cpp # Native COM IDataObject / IDropSource implementation
-|   |-- actions.h / .cpp    # Preview, shell copy, delete, and property handlers
-|   |-- main.cpp            # High-DPI Win32 message loop & virtual ListView UI
+|   |-- actions.h / .cpp    # Preview, batch renamer, hash verifier, folder size, about dialog
+|   |-- main.cpp            # Win32 message loop, toolbar, scopes, breadcrumb & virtual ListView
 |   |-- app.manifest        # DPI per-monitor v2 and LongPath aware application manifest
 |   `-- app.rc              # Windows resource definition
 |-- tests/
@@ -97,7 +103,7 @@ cmake --build build -j 8
 .\build\search_test.exe
 
 # Launch standalone binary
-.\build\qbfind.exe
+.\build\qfbi.exe
 ```
 
 ### Building with Visual Studio (MSVC)

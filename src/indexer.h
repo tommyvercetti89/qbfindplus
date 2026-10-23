@@ -48,6 +48,7 @@ private:
     void flush(uint64_t id, std::vector<Entry>& batch);
     void walkDir(uint64_t id, const std::wstring& dir, std::vector<Entry>& batch);
     Entry build(const std::wstring& path, int64_t size, int64_t mtime, bool isDir) const;
+    Entry build(uint32_t dirId, const wchar_t* fileName, int64_t size, int64_t mtime, bool isDir, uint8_t dirPrio) const;
     int priorityOf(const std::wstring& lowerPath) const;
     bool excluded(const std::wstring& name) const;
 

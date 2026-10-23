@@ -1,6 +1,7 @@
 #include "core.h"
 
 #include <windows.h>
+#include <shlobj.h>
 #include <dbghelp.h>
 
 #include <algorithm>
@@ -12,19 +13,114 @@
 
 namespace qb {
 
-std::wstring_view Entry::lowerExt() const {
-    std::wstring_view n = lowerName();
-    size_t p = n.rfind(L'.');
-    if (p == std::wstring_view::npos) return {};
-    return n.substr(p);
+DirPool& DirPool::global() {
+    static DirPool instance;
+    return instance;
 }
 
-Entry makeEntry(std::wstring path, int64_t size, int64_t mtime, bool isDir, int priority) {
+uint32_t DirPool::getOrAdd(std::wstring_view dir) {
+    if (dir.empty()) return 0;
+    std::lock_guard<std::mutex> lk(mu_);
+    std::wstring s(dir);
+    auto it = map_.find(s);
+    if (it != map_.end()) return it->second;
+    uint32_t id = static_cast<uint32_t>(dirs_.size());
+    dirs_.push_back({s, fold(s)});
+    map_.emplace(std::move(s), id);
+    return id;
+}
+
+std::wstring_view DirPool::get(uint32_t id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (id < dirs_.size()) return dirs_[id].path;
+    return {};
+}
+
+std::wstring_view DirPool::getLower(uint32_t id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (id < dirs_.size()) return dirs_[id].lower;
+    return {};
+}
+
+void DirPool::finishScan() {
+    std::lock_guard<std::mutex> lk(mu_);
+    map_.clear();
+    dirs_.shrink_to_fit();
+}
+
+void DirPool::clear() {
+    std::lock_guard<std::mutex> lk(mu_);
+    dirs_.clear();
+    dirs_.shrink_to_fit();
+    map_.clear();
+}
+
+size_t DirPool::size() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return dirs_.size();
+}
+
+std::vector<DirPool::Item> DirPool::snapshot() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return dirs_;
+}
+
+std::wstring Entry::lowerName() const {
+    return fold(name);
+}
+
+std::wstring Entry::lowerExt() const {
+    size_t p = name.rfind(L'.');
+    if (p == std::wstring::npos) return {};
+    return fold(std::wstring_view(name).substr(p));
+}
+
+std::wstring_view Entry::dir() const {
+    return DirPool::global().get(dirId);
+}
+
+std::wstring_view Entry::lowerDir() const {
+    return DirPool::global().getLower(dirId);
+}
+
+std::wstring Entry::path() const {
+    std::wstring_view d = dir();
+    if (d.empty()) return name;
+    if (d.back() == L'\\' || d.back() == L'/') return std::wstring(d) + name;
+    return std::wstring(d) + L'\\' + name;
+}
+
+std::wstring Entry::lower() const {
+    std::wstring_view d = lowerDir();
+    std::wstring ln = lowerName();
+    if (d.empty()) return ln;
+    if (d.back() == L'\\' || d.back() == L'/') return std::wstring(d) + ln;
+    return std::wstring(d) + L'\\' + ln;
+}
+
+Entry makeEntry(const std::wstring& fullPath, int64_t size, int64_t mtime, bool isDir, int priority) {
     Entry e;
-    e.lower = fold(path);
-    size_t p = path.rfind(L'\\');
-    e.nameOff = (p == std::wstring::npos) ? 0 : static_cast<uint32_t>(p + 1);
-    e.path = std::move(path);
+    size_t p = fullPath.rfind(L'\\');
+    std::wstring_view d, n;
+    if (p == std::wstring::npos) {
+        n = fullPath;
+    } else {
+        d = std::wstring_view(fullPath).substr(0, p);
+        n = std::wstring_view(fullPath).substr(p + 1);
+    }
+    e.dirId = DirPool::global().getOrAdd(d);
+    e.name = std::wstring(n);
+    e.size = size;
+    e.mtime = mtime;
+    e.isDir = isDir;
+    e.priority = priority;
+    return e;
+}
+
+Entry makeEntry(uint32_t dirId, const wchar_t* fileName, int64_t size, int64_t mtime, bool isDir, int priority) {
+    Entry e;
+    e.dirId = dirId;
+    e.name = fileName ? fileName : L"";
     e.size = size;
     e.mtime = mtime;
     e.isDir = isDir;
@@ -41,6 +137,9 @@ wchar_t foldChar(wchar_t c) {
         case 0xD6: case 0xF6: return L'o';
         case 0x15E: case 0x15F: return L's';
         case 0xDC: case 0xFC: return L'u';
+        case 0xC2: case 0xE2: return L'a';  // Â, â
+        case 0xCE: case 0xEE: return L'i';  // Î, î
+        case 0xDB: case 0xFB: return L'u';  // Û, û
     }
     if (c >= 0xD800 && c <= 0xDFFF) return c;  // surrogate halves untouched
     return static_cast<wchar_t>(reinterpret_cast<uintptr_t>(CharLowerW(reinterpret_cast<LPWSTR>(static_cast<uintptr_t>(c)))));
@@ -109,8 +208,10 @@ std::wstring fromUtf8(const std::string& s) {
 }
 
 std::wstring formatInt(int64_t v, wchar_t sep) {
-    std::wstring digits = std::to_wstring(v < 0 ? -v : v);
+    uint64_t uv = (v < 0) ? 0ULL - static_cast<uint64_t>(v) : static_cast<uint64_t>(v);
+    std::wstring digits = std::to_wstring(uv);
     std::wstring out;
+    out.reserve(digits.size() + digits.size() / 3 + 2);
     int c = 0;
     for (size_t i = digits.size(); i-- > 0;) {
         out.insert(out.begin(), digits[i]);
@@ -147,6 +248,83 @@ std::wstring getEnv(const wchar_t* name) {
     DWORD got = GetEnvironmentVariableW(name, v.data(), n);
     v.resize(got);
     return v;
+}
+
+static std::wstring getRegistryUserFolder(const wchar_t* valueName) {
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders",
+                      0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        return {};
+    }
+    wchar_t buf[MAX_PATH * 2] = {};
+    DWORD bufSize = sizeof(buf);
+    DWORD type = 0;
+    std::wstring out;
+    if (RegQueryValueExW(hKey, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(buf), &bufSize) == ERROR_SUCCESS) {
+        wchar_t expanded[MAX_PATH * 2] = {};
+        if (ExpandEnvironmentStringsW(buf, expanded, MAX_PATH * 2) > 0) {
+            out = expanded;
+        } else {
+            out = buf;
+        }
+    }
+    RegCloseKey(hKey);
+    return out;
+}
+
+static std::wstring queryKnownFolder(const KNOWNFOLDERID& id, const wchar_t* regFallback1 = nullptr, const wchar_t* regFallback2 = nullptr) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    PWSTR out = nullptr;
+    std::wstring r;
+    if (SUCCEEDED(SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, nullptr, &out)) && out) {
+        r = out;
+        CoTaskMemFree(out);
+    }
+    if (r.empty() && regFallback1) {
+        r = getRegistryUserFolder(regFallback1);
+    }
+    if (r.empty() && regFallback2) {
+        r = getRegistryUserFolder(regFallback2);
+    }
+    while (r.size() > 3 && (r.back() == L'\\' || r.back() == L'/')) r.pop_back();
+    return r;
+}
+
+const ScopePaths& getScopePaths() {
+    static ScopePaths paths = [] {
+        ScopePaths sp;
+        sp.desktopOriginal = queryKnownFolder(FOLDERID_Desktop, L"Desktop");
+        sp.desktop = fold(sp.desktopOriginal);
+
+        sp.downloadsOriginal = queryKnownFolder(FOLDERID_Downloads, L"{374DE290-123F-4565-9164-39C4925E467B}", L"{7D83EE9B-2244-4E70-B1F5-5393042AF1E4}");
+        if (sp.downloadsOriginal.empty()) sp.downloadsOriginal = getRegistryUserFolder(L"{374DE290-123F-4565-9164-39C4925E467B}");
+        sp.downloads = fold(sp.downloadsOriginal);
+
+        sp.documentsOriginal = queryKnownFolder(FOLDERID_Documents, L"Personal", L"{F42EE2D3-909F-4907-8871-4C22FC0BF756}");
+        sp.documents = fold(sp.documentsOriginal);
+
+        sp.picturesOriginal = queryKnownFolder(FOLDERID_Pictures, L"My Pictures");
+        sp.pictures = fold(sp.picturesOriginal);
+
+        sp.musicOriginal = queryKnownFolder(FOLDERID_Music, L"My Music");
+        sp.music = fold(sp.musicOriginal);
+
+        sp.videosOriginal = queryKnownFolder(FOLDERID_Videos, L"My Video");
+        sp.videos = fold(sp.videosOriginal);
+
+        sp.userProfileOriginal = getEnv(L"USERPROFILE");
+        sp.userProfile = fold(sp.userProfileOriginal);
+
+        DWORD mask = GetLogicalDrives();
+        for (int i = 0; i < 26; ++i) {
+            if (!(mask & (1u << i))) continue;
+            std::wstring rootOrig = {static_cast<wchar_t>(L'A' + i), L':', L'\\'};
+            sp.drivesOriginal.push_back(rootOrig);
+            sp.drives.push_back(fold(rootOrig));
+        }
+        return sp;
+    }();
+    return paths;
 }
 
 std::wstring appDataDir() {
@@ -209,6 +387,14 @@ Settings loadSettings() {
             s.lang = val;
         } else if (key == L"dark") {
             s.darkMode = (val == L"true" || val == L"1");
+        } else if (key == L"toolbar") {
+            s.showToolbar = (val == L"true" || val == L"1");
+        } else if (key == L"tabs") {
+            s.showTabs = (val == L"true" || val == L"1");
+        } else if (key == L"breadcrumb") {
+            s.showBreadcrumb = (val == L"true" || val == L"1");
+        } else if (key == L"scoperight") {
+            s.scopeOnRight = (val == L"true" || val == L"1");
         } else if (key == L"exclude") {
             for (const std::wstring& part : split(val, L';')) {
                 std::wstring p = fold(trim(part));
@@ -224,7 +410,13 @@ bool saveSettings(const Settings& s) {
     if (path.empty()) return false;
     std::wstring ex;
     for (size_t i = 0; i < s.excludes.size(); ++i) ex += (i ? L";" : L"") + s.excludes[i];
-    std::wstring content = L"lang=" + s.lang + L"\ndark=" + (s.darkMode ? L"true" : L"false") + L"\nexclude=" + ex + L"\n";
+    std::wstring content = L"lang=" + s.lang +
+                           L"\ndark=" + (s.darkMode ? L"true" : L"false") +
+                           L"\ntoolbar=" + (s.showToolbar ? L"true" : L"false") +
+                           L"\ntabs=" + (s.showTabs ? L"true" : L"false") +
+                           L"\nbreadcrumb=" + (s.showBreadcrumb ? L"true" : L"false") +
+                           L"\nscoperight=" + (s.scopeOnRight ? L"true" : L"false") +
+                           L"\nexclude=" + ex + L"\n";
     std::string data = toUtf8(content);
     std::wstring tmp = path + L".tmp";
     FILE* f = nullptr;
