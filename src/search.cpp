@@ -313,7 +313,8 @@ bool matchesCategory(const Entry& e, FileCategory cat) {
     if (cat == CAT_ALL) return true;
     if (cat == CAT_FOLDERS) return e.isDir;
     if (e.isDir) return false;
-    std::wstring_view ext = e.lowerExt();
+    std::wstring extStr = e.lowerExt();
+    std::wstring_view ext = extStr;
     if (!ext.empty() && ext.front() == L'.') ext.remove_prefix(1);
     switch (cat) {
         case CAT_DOCS: {
